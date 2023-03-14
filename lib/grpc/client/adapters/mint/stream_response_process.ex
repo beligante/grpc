@@ -67,6 +67,10 @@ defmodule GRPC.Client.Adapters.Mint.StreamResponseProcess do
     :ok
   end
 
+  def consume(pid, :responses, responses) do
+    GenServer.cast(pid, {:consume_response, {:responses, responses}})
+  end
+
   # Callbacks
 
   @impl true
@@ -78,15 +82,80 @@ defmodule GRPC.Client.Adapters.Mint.StreamResponseProcess do
       responses: [],
       done: false,
       from: nil,
-      compressor: nil
+      compressor: nil,
+      headers_sent?: false
     }
 
     {:ok, state}
   end
 
   @impl true
+  def handle_cast({:consume_response, {:responses, responses}}, state) do
+    new_state = responses |> Enum.reduce(state, &consume_response/2)
+
+    {:noreply, new_state, {:continue, :produce_response}}
+  end
+
+  defp consume_response({:status, _ref, _status}, state), do: state
+
+  defp consume_response({:data, _ref, data}, state) do
+    %{
+      buffer: buffer,
+      grpc_stream: %{response_mod: res_mod, codec: codec},
+      responses: responses
+    } = state
+
+    case GRPC.Message.get_message(buffer <> data, state.compressor) do
+      {{_, message}, rest} ->
+        # TODO add code here to handle compressor headers
+        response = codec.decode(message, res_mod)
+        new_responses = responses ++ [{:ok, response}]
+        %{state | buffer: rest, responses: new_responses}
+
+      _ ->
+        %{state | buffer: buffer <> data}
+    end
+  end
+
+  defp consume_response({:headers, _ref, headers}, state) do
+    %{
+      headers_sent?: headers_sent?,
+      send_headers_or_trailers: send_headers_or_trailers?,
+      responses: responses
+    } = state
+
+    response_type = if headers_sent?, do: :trailers, else: :headers
+    state = update_compressor({response_type, headers}, state)
+
+    header_resp = get_headers_response(headers, response_type)
+
+    cond do
+      match?({:error, _}, header_resp) ->
+        %{state | responses: responses ++ [header_resp], headers_sent?: response_type == :headers}
+
+      send_headers_or_trailers? ->
+        %{state | responses: responses ++ [header_resp], headers_sent?: response_type == :headers}
+
+      true ->
+        state
+    end
+  end
+
+  defp consume_response({:done, _ref}, state) do
+    %{state | done: true}
+  end
+
+  @impl true
   def handle_call(:get_response, from, state) do
-    {:noreply, put_in(state[:from], from), {:continue, :produce_response}}
+    cond do
+      length(state.responses) > 0 ->
+        %{responses: [head | rest]} = state
+        {:reply, head, %{state| responses: rest}}
+      state.done ->
+        {:stop, :normal, nil, state}
+      true ->
+        {:noreply, put_in(state[:from], from), {:continue, :produce_response}}
+    end
   end
 
   def handle_call({:consume_response, {:data, data}}, _from, state) do

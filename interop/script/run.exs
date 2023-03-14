@@ -47,14 +47,16 @@ defmodule InteropTestRunner do
   end
 end
 
-for adapter <- [Gun, Mint] do
-  Logger.info("Starting run for adapter: #{adapter}")
-  args = [adapter, port, rounds]
-  stream_opts = [max_concurrency: concurrency, ordered: false, timeout: :infinity]
-  1..concurrency
-  |> Task.async_stream(InteropTestRunner, :run, args, stream_opts)
-  |> Enum.to_list()
-end
+:timer.tc(fn ->
+  for adapter <- [Gun] do
+    Logger.info("Starting run for adapter: #{adapter}")
+    args = [adapter, port, rounds]
+    stream_opts = [max_concurrency: concurrency, ordered: false, timeout: :infinity]
+    1..concurrency
+    |> Task.async_stream(InteropTestRunner, :run, args, stream_opts)
+    |> Enum.to_list()
+  end
+end) |> IO.inspect
 
 Logger.info("Succeed!")
 :ok = GRPC.Server.stop_endpoint(Interop.Endpoint)

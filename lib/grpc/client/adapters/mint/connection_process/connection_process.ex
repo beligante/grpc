@@ -178,19 +178,31 @@ defmodule GRPC.Client.Adapters.Mint.ConnectionProcess do
         Logger.debug(fn -> "Received unknown message: " <> inspect(message) end)
         {:noreply, state}
 
+      {:ok, conn, []} ->
+        state = State.update_conn(state, conn)
+        check_connection_status(state)
+
       {:ok, conn, responses} ->
         state = State.update_conn(state, conn)
 
-        state =
-          case state.requests do
-            requests when map_size(requests) == 0 ->
-              state
+        responses
+        |> Enum.group_by(fn
+          {_kind, ref, _content} -> ref
+          {_kind, ref} -> ref
+        end)
+        |> Enum.reduce(state, fn {request_ref, responses}, state_acc ->
+          state_acc
+          |> State.stream_response_pid(request_ref)
+          |> StreamResponseProcess.consume(:responses, responses)
 
-            _ ->
-              Enum.reduce(responses, state, &process_response/2)
+          if Enum.any?(responses, &match?({:done, _}, &1)) do
+            {_request_state, new_state} = State.pop_ref(state_acc, request_ref)
+            new_state
+          else
+            state_acc
           end
-
-        check_connection_status(state)
+        end)
+        |> check_connection_status()
 
       {:error, conn, _error, _responses} ->
         state = State.update_conn(state, conn)
