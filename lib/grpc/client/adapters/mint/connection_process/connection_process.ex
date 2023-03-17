@@ -61,7 +61,7 @@ defmodule GRPC.Client.Adapters.Mint.ConnectionProcess do
           iodata() | :eof | {:eof, trailing_headers :: Mint.Types.headers()}
         ) :: :ok | {:error, Mint.Types.error()}
   def stream_request_body(pid, request_ref, body) do
-    GenServer.call(pid, {:stream_body, request_ref, body})
+    GenServer.call(pid, {:stream_body, request_ref, body}, 30_000)
   end
 
   @doc """
@@ -76,7 +76,8 @@ defmodule GRPC.Client.Adapters.Mint.ConnectionProcess do
 
   @impl true
   def init({scheme, host, port, opts}) do
-    case Mint.HTTP.connect(scheme, host, port, opts) do
+    case Mint.HTTP.connect(scheme, host, port, opts)
+      do
       {:ok, conn} ->
         {:ok, State.new(conn, opts[:parent])}
 
@@ -122,7 +123,7 @@ defmodule GRPC.Client.Adapters.Mint.ConnectionProcess do
   end
 
   def handle_call(
-        {:request, method, path, headers, body, opts},
+        {:request, method, path, headers, body, opts} = r,
         _from,
         state
       ) do
@@ -146,28 +147,44 @@ defmodule GRPC.Client.Adapters.Mint.ConnectionProcess do
   end
 
   def handle_call({:stream_body, request_ref, :eof}, _from, state) do
-    case Mint.HTTP.stream_request_body(state.conn, request_ref, :eof) do
-      {:ok, conn} ->
-        {:reply, :ok, State.update_conn(state, conn)}
+    if match?(%{requests: %{^request_ref => _}}, state) do
+      case Mint.HTTP.stream_request_body(state.conn, request_ref, :eof) do
+        {:ok, conn} ->
+          {:reply, :ok, State.update_conn(state, conn)}
 
-      {:error, conn, error} ->
-        {:reply, {:error, error}, State.update_conn(state, conn)}
+        {:error, conn, error} ->
+          {:reply, {:error, error}, State.update_conn(state, conn)}
+      end
+    else
+      # request might have been ended by the server and requester doesn't know about that yet.
+      {:reply, :ok, state}
     end
   end
 
   def handle_call({:stream_body, request_ref, body}, from, state) do
-    queue = :queue.in({request_ref, body, from}, state.request_stream_queue)
+    if match?(%{requests: %{^request_ref => _}}, state) do
+      queue = :queue.in({request_ref, body, from}, state.request_stream_queue)
 
-    {:noreply, State.update_request_stream_queue(state, queue),
-     {:continue, :process_request_stream_queue}}
+      new_state = state |> State.put_from(request_ref, from) |> State.update_request_stream_queue(queue)
+      {:noreply, new_state,
+       {:continue, :process_request_stream_queue}}
+    else
+      # request might have been ended by the server and requester doesn't know about that yet.
+      {:reply, :ok, state}
+    end
   end
 
   def handle_call({:cancel_request, request_ref}, _from, state) do
-    state = process_response({:done, request_ref}, state)
+    if match?(%{requests: %{^request_ref => _}}, state) do
+      state = finish_stream_response(request_ref, state)
 
-    case Mint.HTTP2.cancel_request(state.conn, request_ref) do
-      {:ok, conn} -> {:reply, :ok, State.update_conn(state, conn)}
-      {:error, conn, error} -> {:reply, {:error, error}, State.update_conn(state, conn)}
+      case Mint.HTTP2.cancel_request(state.conn, request_ref) do
+        {:ok, conn} -> {:reply, :ok, State.update_conn(state, conn)}
+        {:error, conn, error} -> {:reply, {:error, error}, State.update_conn(state, conn)}
+      end
+    else
+      # request might have been ended by the server and requester doesn't know about that yet.
+      {:reply, :ok, state}
     end
   end
 
@@ -196,15 +213,23 @@ defmodule GRPC.Client.Adapters.Mint.ConnectionProcess do
           |> StreamResponseProcess.consume(:responses, responses)
 
           if Enum.any?(responses, &match?({:done, _}, &1)) do
-            {_request_state, new_state} = State.pop_ref(state_acc, request_ref)
-            new_state
+
+            # Server might have received the request and replyed closing the stream.
+            # that usually happens for errors. So, we need to remove the request_ref from the queue
+            # since the stream is closed for that request (and reply for who's waiting - if any)
+            queue = :queue.delete_with(&match?({^request_ref, _, _}, &1), state.request_stream_queue)
+            {%{from: from}, new_state} = State.pop_ref(state_acc, request_ref)
+            if match?({_, _}, from), do: GenServer.reply(from, :ok)
+
+            State.update_request_stream_queue(new_state, queue)
           else
             state_acc
           end
         end)
         |> check_connection_status()
 
-      {:error, conn, _error, _responses} ->
+      {:error, conn, error, _responses} ->
+        Logger.error("an error happened for the connection: #{inspect(error)}")
         state = State.update_conn(state, conn)
         check_connection_status(state)
     end
@@ -213,15 +238,20 @@ defmodule GRPC.Client.Adapters.Mint.ConnectionProcess do
   @impl true
   def handle_continue(:process_request_stream_queue, state) do
     {{:value, request}, queue} = :queue.out(state.request_stream_queue)
-    {ref, body, _from} = request
-    window_size = get_window_size(state.conn, ref)
-    dequeued_state = State.update_request_stream_queue(state, queue)
+    {request_ref, body, from} = request
+    if match?(%{requests: %{^request_ref => _}}, state) do
+      window_size = get_window_size(state.conn, request_ref)
+      dequeued_state = State.update_request_stream_queue(state, queue)
 
-    cond do
-      # Do nothing, wait for server (on stream/2) to give us more window size
-      window_size == 0 -> {:noreply, state}
-      IO.iodata_length(body) > window_size -> chunk_body_and_enqueue_rest(request, dequeued_state)
-      true -> stream_body_and_reply(request, dequeued_state)
+      cond do
+        # Do nothing, wait for server (on stream/2) to give us more window size
+        window_size == 0 -> {:noreply, state}
+        IO.iodata_length(body) > window_size -> chunk_body_and_enqueue_rest(request, dequeued_state)
+        true -> stream_body_and_reply(request, dequeued_state)
+      end
+    else
+      if match?({_, _}, from), do: GenServer.reply(from, :ok)
+      {:noreply, State.update_request_stream_queue(state, queue)}
     end
   end
 
@@ -230,40 +260,7 @@ defmodule GRPC.Client.Adapters.Mint.ConnectionProcess do
     :normal
   end
 
-  defp process_response({:status, request_ref, status}, state) do
-    State.update_response_status(state, request_ref, status)
-  end
-
-  defp process_response({:headers, request_ref, headers}, state) do
-    if State.empty_headers?(state, request_ref) do
-      new_state = State.update_response_headers(state, request_ref, headers)
-
-      :ok =
-        new_state
-        |> State.stream_response_pid(request_ref)
-        |> StreamResponseProcess.consume(:headers, headers)
-
-      new_state
-    else
-      :ok =
-        state
-        |> State.stream_response_pid(request_ref)
-        |> StreamResponseProcess.consume(:trailers, headers)
-
-      state
-    end
-  end
-
-  defp process_response({:data, request_ref, new_data}, state) do
-    :ok =
-      state
-      |> State.stream_response_pid(request_ref)
-      |> StreamResponseProcess.consume(:data, new_data)
-
-    state
-  end
-
-  defp process_response({:done, request_ref}, state) do
+  defp finish_stream_response(request_ref, state) do
     :ok =
       state
       |> State.stream_response_pid(request_ref)

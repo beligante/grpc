@@ -150,9 +150,11 @@ defmodule GRPC.Client.Adapters.Mint.StreamResponseProcess do
     cond do
       length(state.responses) > 0 ->
         %{responses: [head | rest]} = state
-        {:reply, head, %{state| responses: rest}}
+        {:reply, head, %{state | responses: rest}}
+
       state.done ->
         {:stop, :normal, nil, state}
+
       true ->
         {:noreply, put_in(state[:from], from), {:continue, :produce_response}}
     end
