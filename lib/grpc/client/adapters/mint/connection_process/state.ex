@@ -21,32 +21,18 @@ defmodule GRPC.Client.Adapters.Mint.ConnectionProcess.State do
 
   def put_empty_ref_state(state, ref, response_pid) do
     put_in(state, [:requests, ref], %{
-      stream_response_pid: response_pid,
-      done: false,
-      response: %{},
+      response_pid: response_pid,
       from: nil
     })
   end
 
-  def update_response_status(state, ref, status) do
-    put_in(state, [:requests, ref, :response, :status], status)
-  end
-
-  def update_response_headers(state, ref, headers) do
-    put_in(state.requests[ref].response[:headers], headers)
-  end
-
-  def empty_headers?(state, ref) do
-    is_nil(state.requests[ref].response[:headers])
-  end
-
-  def stream_response_pid(state, ref) do
-    %{requests: %{^ref => %{stream_response_pid: response_pid}}} = state
+  def response_pid(state, ref) do
+    %{requests: %{^ref => %{response_pid: response_pid}}} = state
     response_pid
   end
 
   def pop_ref(state, ref) do
-    pop_in(state.requests[ref])
+    pop_in(state, [:requests, ref])
   end
 
   def put_from(state, ref, from) do

@@ -5,7 +5,7 @@ defmodule GRPC.Client.Adapters.Mint do
 
   alias GRPC.Channel
   alias GRPC.Client.Adapters.Mint.ConnectionProcess
-  alias GRPC.Client.Adapters.Mint.StreamResponseProcess
+  alias GRPC.Client.Adapters.Mint.ResponseProcess
   alias GRPC.Credential
 
   @behaviour GRPC.Client.Adapter
@@ -125,10 +125,10 @@ defmodule GRPC.Client.Adapters.Mint do
   defp mint_scheme(%Channel{scheme: "https"} = _channel), do: :https
   defp mint_scheme(_channel), do: :http
 
-  defp do_receive_data(%{payload: %{stream_response_pid: pid}}, request_type, opts)
+  defp do_receive_data(%{payload: %{response_pid: pid}}, request_type, opts)
        when request_type in [:bidirectional_stream, :server_stream] do
     produce_trailers? = opts[:return_headers] == true
-    stream = StreamResponseProcess.build_stream(pid, produce_trailers?)
+    stream = ResponseProcess.build_stream(pid, produce_trailers?)
     headers_or_error = Enum.at(stream, 0)
     # if this check fails then an error tuple will be returned
     with {:headers, headers} <- headers_or_error do
@@ -141,12 +141,12 @@ defmodule GRPC.Client.Adapters.Mint do
   end
 
   defp do_receive_data(
-         %{payload: %{stream_response_pid: pid}},
+         %{payload: %{response_pid: pid}},
          request_type,
          opts
        )
        when request_type in [:client_stream, :unary] do
-    responses = pid |> StreamResponseProcess.build_stream() |> Enum.to_list()
+    responses = pid |> ResponseProcess.build_stream() |> Enum.to_list()
 
     with :ok <- check_for_error(responses) do
       data = Keyword.fetch!(responses, :ok)
@@ -177,17 +177,17 @@ defmodule GRPC.Client.Adapters.Mint do
        ) do
     headers = GRPC.Transport.HTTP2.client_headers_without_reserved(stream, opts)
 
-    {:ok, stream_response_pid} =
-      StreamResponseProcess.start_link(stream, return_headers_for_request?(stream, opts))
+    {:ok, response_pid} =
+      ResponseProcess.start_link(stream, return_headers_for_request?(stream, opts))
 
     response =
       ConnectionProcess.request(pid, "POST", path, headers, body,
-        stream_response_pid: stream_response_pid
+        response_pid: response_pid
       )
 
     stream
     |> GRPC.Client.Stream.put_payload(:response, response)
-    |> GRPC.Client.Stream.put_payload(:stream_response_pid, stream_response_pid)
+    |> GRPC.Client.Stream.put_payload(:response_pid, response_pid)
   end
 
   defp get_headers_and_trailers(responses) do

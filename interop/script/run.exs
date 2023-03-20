@@ -19,10 +19,7 @@ alias Interop.Client
 {:ok, _pid, port} = GRPC.Server.start_endpoint(Interop.Endpoint, port)
 
 defmodule InteropTestRunner do
-  def run(_cli, adapter, port, rounds) do
-    opts = [interceptors: [GRPC.Client.Interceptors.Logger], adapter: adapter]
-    ch = Client.connect("127.0.0.1", port, opts)
-
+  def run(_cli, ch, rounds) do
     for _ <- 1..rounds do
       Client.empty_unary!(ch)
       Client.cacheable_unary!(ch)
@@ -50,13 +47,17 @@ end
 :timer.tc(fn ->
   for adapter <- [Mint] do
     Logger.info("Starting run for adapter: #{adapter}")
-    args = [adapter, port, rounds]
+
+    opts = [interceptors: [GRPC.Client.Interceptors.Logger], adapter: adapter]
+    ch = Client.connect("127.0.0.1", port, opts)
+    args = [ch, rounds]
     stream_opts = [max_concurrency: concurrency, ordered: false, timeout: :infinity]
     1..concurrency
     |> Task.async_stream(InteropTestRunner, :run, args, stream_opts)
     |> Enum.to_list()
   end
 end)
+|> then(fn {time, _resp} -> Logger.warn("total time: #{time}") end)
 
 Logger.info("Succeed!")
 :ok = GRPC.Server.stop_endpoint(Interop.Endpoint)

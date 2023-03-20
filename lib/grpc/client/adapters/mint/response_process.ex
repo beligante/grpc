@@ -1,4 +1,4 @@
-defmodule GRPC.Client.Adapters.Mint.StreamResponseProcess do
+defmodule GRPC.Client.Adapters.Mint.ResponseProcess do
   @moduledoc false
   # This module represents the process responsible for consuming the
   # incoming messages from a connection. For each request, there will be
