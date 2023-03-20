@@ -1,6 +1,6 @@
 %{
-  "cowboy": {:hex, :cowboy, "2.9.0", "865dd8b6607e14cf03282e10e934023a1bd8be6f6bacf921a7e2a96d800cd452", [:make, :rebar3], [{:cowlib, "2.11.0", [hex: :cowlib, repo: "hexpm", optional: false]}, {:ranch, "1.8.0", [hex: :ranch, repo: "hexpm", optional: false]}], "hexpm", "2c729f934b4e1aa149aff882f57c6372c15399a20d54f65c8d67bef583021bde"},
-  "cowlib": {:hex, :cowlib, "2.11.0", "0b9ff9c346629256c42ebe1eeb769a83c6cb771a6ee5960bd110ab0b9b872063", [:make, :rebar3], [], "hexpm", "2b3e9da0b21c4565751a6d4901c20d1b4cc25cbb7fd50d91d2ab6dd287bc86a9"},
+  "cowboy": {:git, "git@github.com:beligante/cowboy.git", "23db24881fb267f11204c53c8743058cb0bb389d", [branch: "add-debug"]},
+  "cowlib": {:git, "git@github.com:beligante/cowlib.git", "1bbb564f9bd28c6d8f1335052855a177dbf10e8f", [branch: "add-debug"]},
   "extrace": {:hex, :extrace, "0.2.1", "e234f1f64df8c989771b7b5d047a3412f10512c0e3d414fc7eb0e8fc633779f8", [:mix], [{:recon, "~> 2.5", [hex: :recon, repo: "hexpm", optional: false]}], "hexpm", "1b2d9fc4bacc208d5aaa97f61e7c47b66ff4dfc155e9b95647e68ca316ab3981"},
   "grpc": {:git, "https://github.com/elixir-grpc/grpc.git", "21422839798e49bf6d29327fab0a7add51becedd", []},
   "grpc_statsd": {:hex, :grpc_statsd, "0.1.0", "a95ae388188486043f92a3c5091c143f5a646d6af80c9da5ee616546c4d8f5ff", [:mix], [{:grpc, ">= 0.0.0", [hex: :grpc, repo: "hexpm", optional: true]}, {:statix, ">= 0.0.0", [hex: :statix, repo: "hexpm", optional: true]}], "hexpm", "de0c05db313c7b3ffeff345855d173fd82fec3de16591a126b673f7f698d9e74"},

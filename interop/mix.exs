@@ -27,8 +27,8 @@ defmodule Interop.MixProject do
       {:grpc_statsd, "~> 0.1.0"},
       {:statix, ">= 1.2.1"},
       {:extrace, "~> 0.2"},
-      {:cowboy, path: "/home/luis/work/cowboy", override: true},
-      {:cowlib, "~> 2.11.0", override: true}
+      {:cowboy, git: "git@github.com:beligante/cowboy.git", branch: "add-debug", override: true},
+      {:cowlib, git: "git@github.com:beligante/cowlib.git", branch: "add-debug", override: true},
     ]
   end
 end
