@@ -393,7 +393,7 @@ defmodule GRPC.Server.Adapters.Cowboy.Handler do
   end
 
   defp read_full_body(req, body, timer) do
-    result = :cowboy_req.read_body(req, timeout_left_opt(timer))
+    result = :cowboy_req.read_body(req, timeout_left_opt(nil))
 
     case result do
       {:ok, data, req} -> {:ok, body <> data, req}

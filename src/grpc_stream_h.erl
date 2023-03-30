@@ -92,39 +92,32 @@ data(StreamID, IsFin, Data, State=#state{read_body_pid=Pid, read_body_ref=Ref,
 	end,
 	do_data(StreamID, IsFin, Data, Commands, State#state{
 		read_body_ref=undefined,
+		%% @todo This is wrong, it's missing byte_size(Data).
+		body_length=BodyLen + byte_size(Data)
+	});
+
+%% Stream is waiting for data but we didn't receive enough to send yet.
+data(StreamID, IsFin=nofin, Data, State=#state{
+	read_body_length=ReadLen, read_body_buffer=Buffer, body_length=BodyLen})
+	when byte_size(Data) + byte_size(Buffer) < ReadLen ->
+	do_data(StreamID, IsFin, Data, [], State#state{
+		expect=undefined,
+		read_body_buffer= << Buffer/binary, Data/binary >>,
+		body_length=BodyLen + byte_size(Data)
+	});
+%% Stream is waiting for data and we received enough to send.
+data(StreamID, IsFin, Data, State=#state{read_body_pid=Pid, read_body_ref=Ref,
+	read_body_timer_ref=TRef, read_body_buffer=Buffer, body_length=BodyLen0}) ->
+	BodyLen = BodyLen0 + byte_size(Data),
+	ok = erlang:cancel_timer(TRef, [{async, true}, {info, false}]),
+	send_request_body(Pid, Ref, IsFin, BodyLen, <<Buffer/binary, Data/binary>>),
+	do_data(StreamID, IsFin, Data, [], State#state{
+		expect=undefined,
+		read_body_ref=undefined,
+		read_body_timer_ref=undefined,
+		read_body_buffer= <<>>,
 		body_length=BodyLen
 	}).
-%%
-% %% There is no buffering done in auto mode.
-% data(StreamID, IsFin, Data, State=#state{read_body_pid=Pid, read_body_ref=Ref,
-% 		read_body_length=auto, body_length=BodyLen}) ->
-% 	send_request_body(Pid, Ref, IsFin, BodyLen, Data),
-% 	do_data(StreamID, IsFin, Data, [{flow, byte_size(Data)}], State#state{
-% 		read_body_ref=undefined,
-% 		body_length=BodyLen
-% 	});
-% %% Stream is waiting for data but we didn't receive enough to send yet.
-% data(StreamID, IsFin=nofin, Data, State=#state{
-% 		read_body_length=ReadLen, read_body_buffer=Buffer, body_length=BodyLen})
-% 		when byte_size(Data) + byte_size(Buffer) < ReadLen ->
-% 	do_data(StreamID, IsFin, Data, [], State#state{
-% 		expect=undefined,
-% 		read_body_buffer= << Buffer/binary, Data/binary >>,
-% 		body_length=BodyLen + byte_size(Data)
-% 	});
-% %% Stream is waiting for data and we received enough to send.
-% data(StreamID, IsFin, Data, State=#state{read_body_pid=Pid, read_body_ref=Ref,
-% 		read_body_timer_ref=TRef, read_body_buffer=Buffer, body_length=BodyLen0}) ->
-% 	BodyLen = BodyLen0 + byte_size(Data),
-% 	ok = erlang:cancel_timer(TRef, [{async, true}, {info, false}]),
-% 	send_request_body(Pid, Ref, IsFin, BodyLen, <<Buffer/binary, Data/binary>>),
-% 	do_data(StreamID, IsFin, Data, [], State#state{
-% 		expect=undefined,
-% 		read_body_ref=undefined,
-% 		read_body_timer_ref=undefined,
-% 		read_body_buffer= <<>>,
-% 		body_length=BodyLen
-% 	}).
 
 do_data(StreamID, IsFin, Data, Commands1, State=#state{next=Next0}) ->
 	{Commands2, Next} = cowboy_stream:data(StreamID, IsFin, Data, Next0),
@@ -262,9 +255,13 @@ info(StreamID, Data0={data, Pid, _, _}, State0=#state{stream_body_status=Status}
 	end,
 	Data = erlang:delete_element(2, Data0),
 	do_info(StreamID, Data, [Data], State);
-info(StreamID, Alarm={alarm, Name, on}, State)
-		when Name =:= connection_buffer_full; Name =:= stream_buffer_full ->
-	do_info(StreamID, Alarm, [], State#state{stream_body_status=blocking});
+info(StreamID, Alarm={alarm, Name, on}, State0=#state{stream_body_status=Status})
+	when Name =:= connection_buffer_full; Name =:= stream_buffer_full ->
+	State = case Status of
+						normal -> State0#state{stream_body_status=blocking};
+						_ -> State0
+					end,
+	do_info(StreamID, Alarm, [], State);
 info(StreamID, Alarm={alarm, Name, off}, State=#state{stream_body_pid=Pid, stream_body_status=Status})
 		when Name =:= connection_buffer_full; Name =:= stream_buffer_full ->
 	_ = case Status of
@@ -309,25 +306,18 @@ send_request_body(Pid, Ref, fin, BodyLen, Data) ->
 
 %% Request process.
 
-%% We catch all exceptions in order to add the stacktrace to
-%% the exit reason as it is not propagated by proc_lib otherwise
-%% and therefore not present in the 'EXIT' message. We want
-%% the stacktrace in order to simplify debugging of errors.
-%%
-%% This + the behavior in proc_lib means that we will get a
-%% {Reason, Stacktrace} tuple for every exceptions, instead of
-%% just for errors and throws.
-%%
-%% @todo Better spec.
+%% We add the stacktrace to exit exceptions here in order
+%% to simplify the debugging of errors. The proc_lib library
+%% already adds the stacktrace to other types of exceptions.
 -spec request_process(cowboy_req:req(), cowboy_middleware:env(), [module()]) -> ok.
 request_process(Req, Env, Middlewares) ->
 	try
 		execute(Req, Env, Middlewares)
 	catch
-		exit:Reason:Stacktrace ->
-			erlang:raise(exit, {Reason, Stacktrace}, Stacktrace);
-		Class:Reason:Stacktrace ->
-			erlang:raise(Class, {Reason, Stacktrace}, Stacktrace)
+		exit:Reason={shutdown, _}:Stacktrace ->
+			erlang:raise(exit, Reason, Stacktrace);
+		exit:Reason:Stacktrace when Reason =/= normal, Reason =/= shutdown ->
+			erlang:raise(exit, {Reason, Stacktrace}, Stacktrace)
 	end.
 
 execute(_, _, []) ->

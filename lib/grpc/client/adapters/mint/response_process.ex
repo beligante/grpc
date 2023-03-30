@@ -14,6 +14,8 @@ defmodule GRPC.Client.Adapters.Mint.ResponseProcess do
   @accepted_types [:data, :trailers, :headers, :error]
   @header_types [:headers, :trailers]
 
+  defstruct [:pid, :produce_trailers?]
+
   use GenServer
 
   @spec start_link(GRPC.Client.Stream.t(), send_headers_or_trailers? :: boolean()) ::

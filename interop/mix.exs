@@ -28,7 +28,7 @@ defmodule Interop.MixProject do
       {:statix, ">= 1.2.1"},
       {:extrace, "~> 0.2"},
       {:cowboy, path: "/home/luis/work/cowboy", override: true},
-      {:cowlib, "~> 2.11.0", override: true}
+      {:cowlib, path: "/home/luis/work/cowlib", override: true},
     ]
   end
 end

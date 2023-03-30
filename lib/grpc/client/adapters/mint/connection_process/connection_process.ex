@@ -41,7 +41,7 @@ defmodule GRPC.Client.Adapters.Mint.ConnectionProcess do
           opts :: keyword()
         ) :: {:ok, %{request_ref: Mint.Types.request_ref()}} | {:error, Mint.Types.error()}
   def request(pid, method, path, headers, body, opts \\ []) do
-    GenServer.call(pid, {:request, method, path, headers, body, opts})
+    :gen_statem.call(pid, {:request, method, path, headers, body, opts})
   end
 
   @doc """
