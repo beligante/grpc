@@ -119,12 +119,16 @@ defmodule GRPC.Client.Adapters.Mint do
       |> Keyword.get(:transport_opts, [])
       |> Keyword.merge(ssl)
 
-    [transport_opts: Keyword.merge(@default_transport_opts, transport_opts)]
+   client_settings = Keyword.get(opts, :client_settings, [])
+
+    [transport_opts: Keyword.merge(@default_transport_opts, transport_opts), client_settings: client_settings]
   end
 
   defp connect_opts(_channel, opts) do
     transport_opts = Keyword.get(opts, :transport_opts, [])
-    [transport_opts: Keyword.merge(@default_transport_opts, transport_opts)]
+    client_settings = Keyword.get(opts, :client_settings, [])
+
+    [transport_opts: Keyword.merge(@default_transport_opts, transport_opts), client_settings: client_settings]
   end
 
   defp merge_opts(opts, module_opts) do
