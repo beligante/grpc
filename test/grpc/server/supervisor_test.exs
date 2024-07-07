@@ -7,10 +7,17 @@ defmodule GRPC.Server.SupervisorTest do
     def __meta__(_), do: [FeatureServer]
   end
 
+  require Logger
+
   describe "init/1" do
     test "does not start children if opts sets false" do
       assert {:ok, {%{strategy: :one_for_one}, []}} =
-               Supervisor.init(endpoint: MockEndpoint, port: 1234, start_server: false)
+               Supervisor.init(
+                 endpoint: MockEndpoint,
+                 port: 1234,
+                 start_server: false,
+                 crash_report: fn exception -> Logger.error(exception) end
+               )
     end
 
     test "fails if a tuple is passed" do

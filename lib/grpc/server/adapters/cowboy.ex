@@ -226,6 +226,9 @@ defmodule GRPC.Server.Adapters.Cowboy do
     dispatch_key = Module.concat(endpoint, Dispatch)
     :persistent_term.put(dispatch_key, dispatch)
 
+    crash_report_func = Keyword.get(opts, :crash_report, fn _exception -> :ok end)
+    :persistent_term.put(crash_report_key(endpoint), crash_report_func)
+
     idle_timeout = Keyword.get(opts, :idle_timeout) || :infinity
     num_acceptors = Keyword.get(opts, :num_acceptors) || @default_num_acceptors
     max_connections = Keyword.get(opts, :max_connections) || @default_max_connections
@@ -306,5 +309,14 @@ defmodule GRPC.Server.Adapters.Cowboy do
 
   defp servers_name(endpoint, _) do
     inspect(endpoint)
+  end
+
+  defp crash_report_key(endpoint) do
+    Module.concat(endpoint, CrashReport)
+  end
+
+  @spec crash_report(module) :: (exception :: Exception.t() -> :ok)
+  def crash_report(endpoint) do
+    :persistent_term.get(crash_report_key(endpoint), fn _exception -> :ok end)
   end
 end

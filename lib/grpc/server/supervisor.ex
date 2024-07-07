@@ -40,7 +40,8 @@ defmodule GRPC.Server.Supervisor do
 
     * `:endpoint` - defines the endpoint module that will be started.
     * `:port` - the HTTP port for the endpoint.
-    * `:servers` - the list of servers that will be be started.
+    * `:servers` - the list of servers that will be started.
+    * `:crash_report` (optional) - A function that accepts an exception as single argument to be called for report crashes. Each adapter report crashes based on implementation details.
 
   Either `:endpoint` or `:servers` must be present, but not both.
   """

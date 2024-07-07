@@ -3,6 +3,7 @@ defmodule GRPC.Server.Adapters.Cowboy.Handler do
   A cowboy handler accepting all requests and calls corresponding functions defined by users.
   """
 
+  alias GRPC.Server.Adapters.Cowboy.HandlerException
   alias GRPC.Transport.HTTP2
   alias GRPC.RPCError
   require Logger
@@ -79,6 +80,8 @@ defmodule GRPC.Server.Adapters.Cowboy.Handler do
 
       timeout = :cowboy_req.header("grpc-timeout", req)
 
+      crash_report = @adapter.crash_report(endpoint)
+
       timer_ref =
         if is_binary(timeout) do
           Process.send_after(
@@ -88,7 +91,13 @@ defmodule GRPC.Server.Adapters.Cowboy.Handler do
           )
         end
 
-      {:cowboy_loop, req, %{pid: server_rpc_pid, handling_timer: timer_ref, pending_reader: nil}}
+      {:cowboy_loop, req,
+       %{
+         pid: server_rpc_pid,
+         handling_timer: timer_ref,
+         pending_reader: nil,
+         crash_report: crash_report
+       }}
     else
       {:error, error} ->
         Logger.error(fn -> inspect(error) end)
@@ -455,17 +464,26 @@ defmodule GRPC.Server.Adapters.Cowboy.Handler do
   end
 
   # expected error raised from user to return error immediately
-  def info({:EXIT, pid, {%RPCError{} = error, _stacktrace}}, req, state = %{pid: pid}) do
+  def info({:EXIT, pid, {%RPCError{} = error, stacktrace}}, req, state = %{pid: pid}) do
     req = send_error(req, error, state, :rpc_error)
+
+    req
+    |> HandlerException.new(error, stacktrace)
+    |> state.crash_report.()
+
     {:stop, req, state}
   end
 
   # unknown error raised from rpc
-  def info({:EXIT, pid, {:handle_error, _kind}} = err, req, state = %{pid: pid}) do
+  def info({:EXIT, pid, {:handle_error, error}} = err, req, state = %{pid: pid}) do
     Logger.warning("3. #{inspect(state)} #{inspect(err)}")
 
-    error = %RPCError{status: GRPC.Status.unknown(), message: "Internal Server Error"}
-    req = send_error(req, error, state, :error)
+    rpc_error = %RPCError{status: GRPC.Status.unknown(), message: "Internal Server Error"}
+    req = send_error(req, rpc_error, state, :error)
+
+    req
+    |> HandlerException.new(error.kind, error.stack)
+    |> state.crash_report.()
 
     {:stop, req, state}
   end
@@ -475,6 +493,10 @@ defmodule GRPC.Server.Adapters.Cowboy.Handler do
 
     error = %RPCError{status: GRPC.Status.unknown(), message: "Internal Server Error"}
     req = send_error(req, error, state, reason)
+
+    req
+    |> HandlerException.new(error, stacktrace)
+    |> state.crash_report.()
 
     {:stop, req, state}
   end
@@ -500,17 +522,17 @@ defmodule GRPC.Server.Adapters.Cowboy.Handler do
         end
       catch
         kind, e ->
-          Logger.error(Exception.format(kind, e, __STACKTRACE__))
+          reason = Exception.normalize(kind, e, __STACKTRACE__)
 
-          exit({:handle_error, kind})
+          {:error, %{kind: kind, reason: reason, stack: __STACKTRACE__}}
       end
 
     case result do
       {:error, %GRPC.RPCError{} = e} ->
-        exit({e, ""})
+        exit({e, []})
 
-      {:error, %{kind: kind}} ->
-        exit({:handle_error, kind})
+      {:error, %{kind: _kind, reason: _reason, stack: _stack} = e} ->
+        exit({:handle_error, e})
 
       other ->
         other
