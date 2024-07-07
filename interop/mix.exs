@@ -27,6 +27,8 @@ defmodule Interop.MixProject do
       {:grpc_statsd, "~> 0.1.0"},
       {:statix, ">= 1.2.1"},
       {:extrace, "~> 0.2"},
+      {:benchee, "~> 1.3"},
+      {:benchee_markdown, "~> 0.3", only: :dev}
     ]
   end
 end
